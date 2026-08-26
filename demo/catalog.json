@@ -1,0 +1,137 @@
+{
+  "catalog": {
+    "id": "demo",
+    "type": "Collection",
+    "itemType": "record",
+    "title": "Tlon demonstration catalog",
+    "description": "Deterministic sample metadata for exploring OGC API Records search, sorting, pagination, and all three facet types.",
+    "keywords": ["demo", "metadata", "OGC API Records", "facets"],
+    "extent": {
+      "spatial": {"bbox": [[-180, -90, 180, 90]]},
+      "temporal": {"interval": [["2021-01-01", ".."]]}
+    }
+  },
+  "queryables": {
+    "organization": {"title": "Publisher", "description": "Organization responsible for the resource", "type": "string", "x-tlon-path": "/properties/organization"},
+    "keywords": {"title": "Keywords", "type": "array", "items": {"type": "string"}, "x-tlon-path": "/properties/keywords"},
+    "score": {"title": "Quality score", "description": "Synthetic score from zero to one hundred", "type": "number", "x-tlon-path": "/properties/score"},
+    "status": {"title": "Lifecycle status", "type": "string", "x-tlon-path": "/properties/status"},
+    "license": {"title": "License", "type": "string", "x-tlon-path": "/properties/license"},
+    "observed": {"title": "Observation time", "type": "string", "format": "date-time", "x-tlon-path": "/properties/observed"},
+    "published": {"title": "Publication date", "type": "string", "format": "date", "x-tlon-path": "/properties/published"},
+    "hasDownload": {"title": "Download available", "type": "boolean", "x-tlon-path": "/properties/hasDownload"}
+  },
+  "sortables": {
+    "title": {"title": "Title", "type": "string", "x-tlon-path": "/properties/title"},
+    "organization": {"title": "Publisher", "type": "string", "x-tlon-path": "/properties/organization"},
+    "score": {"title": "Quality score", "type": "number", "x-tlon-path": "/properties/score"},
+    "observed": {"title": "Observation time", "type": "string", "format": "date-time", "x-tlon-path": "/properties/observed"},
+    "published": {"title": "Publication date", "type": "string", "format": "date", "x-tlon-path": "/properties/published"},
+    "updated": {"title": "Server update time", "type": "string", "format": "date-time", "x-tlon-path": "/properties/updated"}
+  },
+  "defaultSortOrder": [
+    {"property": "observed", "direction": "desc"}
+  ],
+  "facets": {
+    "organizations": {
+      "title": "Publishers",
+      "description": "A term facet over the publishing organization",
+      "type": "term",
+      "property": "organization",
+      "default": true,
+      "bucketCount": 8,
+      "sortedBy": "count",
+      "minOccurs": 1
+    },
+    "keywords": {
+      "title": "Keywords",
+      "description": "A multi-valued term facet",
+      "type": "term",
+      "property": "keywords",
+      "default": true,
+      "bucketCount": 10,
+      "sortedBy": "count",
+      "minOccurs": 2
+    },
+    "quality": {
+      "title": "Quality score",
+      "description": "A numeric histogram with ranges derived from the result set",
+      "type": "histogram",
+      "property": "score",
+      "default": true,
+      "bucketType": "fixedBucketCount",
+      "bucketCount": 5,
+      "sortedBy": "value",
+      "minOccurs": 1
+    },
+    "observedQuarter": {
+      "title": "Observation periods",
+      "description": "A temporal histogram using a fixed ninety-day interval",
+      "type": "histogram",
+      "property": "observed",
+      "default": true,
+      "bucketType": "fixedInterval",
+      "interval": "P90D",
+      "bucketCount": 12,
+      "sortedBy": "value",
+      "minOccurs": 1
+    },
+    "resourceGroups": {
+      "title": "Useful groups",
+      "description": "Overlapping named filters expressed as Basic CQL2 Text",
+      "type": "filter",
+      "default": true,
+      "bucketCount": 8,
+      "sortedBy": "count",
+      "minOccurs": 1,
+      "filters": {
+        "data": "type = 'dataset' OR type = 'collection'",
+        "services": "type = 'service'",
+        "models": "type = 'model'",
+        "high quality": "score >= 80",
+        "active": "status = 'active'"
+      }
+    },
+    "status": {
+      "title": "Lifecycle status",
+      "type": "term",
+      "property": "status",
+      "bucketCount": 5,
+      "sortedBy": "value",
+      "minOccurs": 1
+    }
+  },
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Tlon demonstration record",
+    "type": "object",
+    "required": ["type", "geometry", "properties"],
+    "properties": {
+      "id": {"type": "string"},
+      "type": {"const": "Feature"},
+      "geometry": {"type": ["object", "null"]},
+      "time": {"type": ["object", "null"]},
+      "externalIds": {"type": "array", "items": {"type": "object", "required": ["value"]}},
+      "links": {"type": "array", "items": {"type": "object"}},
+      "properties": {
+        "type": "object",
+        "required": ["type", "title"],
+        "properties": {
+          "type": {"type": "string"},
+          "title": {"type": "string", "minLength": 1},
+          "description": {"type": "string"},
+          "organization": {"type": "string"},
+          "keywords": {"type": "array", "items": {"type": "string"}},
+          "score": {"type": "number", "minimum": 0, "maximum": 100},
+          "status": {"type": "string"},
+          "license": {"type": "string"},
+          "observed": {"type": "string", "format": "date-time"},
+          "published": {"type": "string", "format": "date"},
+          "hasDownload": {"type": "boolean"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "additionalProperties": true
+  }
+}

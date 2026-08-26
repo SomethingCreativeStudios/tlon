@@ -1,0 +1,31 @@
+{
+  "catalog": {
+    "id": "records",
+    "type": "Collection",
+    "itemType": "record",
+    "title": "Records",
+    "description": "Example Tlon searchable catalog",
+    "keywords": ["metadata", "OGC API Records"],
+    "extent": {
+      "spatial": {"bbox": [[-180, -90, 180, 90]]},
+      "temporal": {"interval": [["..", ".."]]}
+    }
+  },
+  "queryables": {
+    "organization": {"title": "Organization", "type": "string", "x-tlon-path": "/properties/organization"},
+    "keywords": {"title": "Keywords", "type": "array", "items": {"type": "string"}, "x-tlon-path": "/properties/keywords"},
+    "score": {"title": "Quality score", "type": "number", "x-tlon-path": "/properties/score"}
+  },
+  "sortables": {
+    "title": {"type": "string", "x-tlon-path": "/properties/title"},
+    "score": {"type": "number", "x-tlon-path": "/properties/score"},
+    "updated": {"type": "string", "format": "date-time", "x-tlon-path": "/properties/updated"}
+  },
+  "defaultSortOrder": [{"property": "updated", "direction": "desc"}],
+  "facets": {
+    "keywords": {"type": "term", "property": "keywords", "default": true, "bucketCount": 10, "sortedBy": "count", "minOccurs": 1},
+    "score": {"type": "histogram", "property": "score", "default": true, "bucketType": "fixedBucketCount", "bucketCount": 5},
+    "updated": {"type": "histogram", "property": "updated", "bucketType": "fixedInterval", "interval": "P30D", "bucketCount": 12},
+    "resourceType": {"type": "filter", "default": true, "bucketCount": 10, "filters": {"dataset": "type = 'dataset'", "service": "type = 'service'"}}
+  }
+}

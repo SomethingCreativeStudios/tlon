@@ -1,0 +1,10 @@
+package: api
+output: generated.go
+generate:
+  models: true
+  chi-server: true
+  strict-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: false
+

@@ -1,0 +1,52 @@
+services:
+  database:
+    build:
+      context: .
+      dockerfile: docker/postgis/Dockerfile
+    environment:
+      POSTGRES_DB: tlon
+      POSTGRES_USER: tlon
+      POSTGRES_PASSWORD: tlon
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tlon -d tlon"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "${TLON_DB_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+
+  migrate:
+    build:
+      context: .
+    command: ["migrate", "up"]
+    environment: &tlon-environment
+      TLON_DATABASE_URL: postgres://tlon:tlon@database:5432/tlon?sslmode=disable
+      TLON_PUBLIC_URL: ${TLON_PUBLIC_URL:-http://localhost:8080}
+      TLON_CURSOR_SECRET: local-development-cursor-secret-change-me
+      TLON_AUTH_MODE: ${TLON_AUTH_MODE:-deny}
+    depends_on:
+      database:
+        condition: service_healthy
+
+  tlon:
+    build:
+      context: .
+    environment:
+      <<: *tlon-environment
+    depends_on:
+      database:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/tlon", "healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+    ports:
+      - "${TLON_HTTP_PORT:-8080}:8080"
+
+volumes:
+  postgres-data:

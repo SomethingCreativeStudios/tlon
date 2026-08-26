@@ -1,0 +1,640 @@
+openapi: 3.0.3
+info:
+  title: Tlon OGC API Records
+  version: 0.1.0
+  description: >-
+    JSON/GeoJSON implementation of OGC API Records Part 1, draft Part 2
+    Facets, and the record CRUD requirement classes from draft Part 3.
+servers:
+  - url: http://localhost:8080
+paths:
+  /:
+    get:
+      operationId: getLandingPage
+      responses:
+        '200':
+          description: Landing page
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LandingPage'}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headLandingPage
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsLandingPage
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /api:
+    get:
+      operationId: getAPI
+      responses:
+        '200':
+          description: OpenAPI definition
+          content:
+            application/vnd.oai.openapi+json;version=3.0:
+              schema: {type: object, additionalProperties: true}
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headAPI
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsAPI
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /conformance:
+    get:
+      operationId: getConformance
+      responses:
+        '200':
+          description: Conformance classes
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Conformance'}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headConformance
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsConformance
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /collections:
+    get:
+      operationId: getCollections
+      parameters:
+        - {$ref: '#/components/parameters/Bbox'}
+        - {$ref: '#/components/parameters/Datetime'}
+        - {$ref: '#/components/parameters/Q'}
+        - {$ref: '#/components/parameters/Type'}
+        - {$ref: '#/components/parameters/Ids'}
+        - {$ref: '#/components/parameters/ExternalIds'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Sortby'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Filter'}
+        - {$ref: '#/components/parameters/FilterLang'}
+      responses:
+        '200':
+          description: Catalogs
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CatalogCollection'}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headCollections
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsCollections
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /collections/{catalogId}:
+    parameters:
+      - {$ref: '#/components/parameters/CatalogId'}
+    get:
+      operationId: getCatalog
+      responses:
+        '200':
+          description: Catalog
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Catalog'}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headCatalog
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsCatalog
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /collections/{catalogId}/items:
+    parameters:
+      - {$ref: '#/components/parameters/CatalogId'}
+    get:
+      operationId: searchRecords
+      parameters:
+        - {$ref: '#/components/parameters/Bbox'}
+        - {$ref: '#/components/parameters/Datetime'}
+        - {$ref: '#/components/parameters/Q'}
+        - {$ref: '#/components/parameters/Type'}
+        - {$ref: '#/components/parameters/Ids'}
+        - {$ref: '#/components/parameters/ExternalIds'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Sortby'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Filter'}
+        - {$ref: '#/components/parameters/FilterLang'}
+        - {$ref: '#/components/parameters/Facets'}
+      responses:
+        '200':
+          description: Records and facets
+          content:
+            application/geo+json:
+              schema: {$ref: '#/components/schemas/RecordCollection'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      operationId: createRecord
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/geo+json:
+            schema: {$ref: '#/components/schemas/Record'}
+          application/json:
+            schema: {$ref: '#/components/schemas/Record'}
+      responses:
+        '201':
+          description: Record created
+          headers:
+            Location: {schema: {type: string, format: uri}}
+            ETag: {schema: {type: string}}
+          content:
+            application/geo+json:
+              schema: {$ref: '#/components/schemas/Record'}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headRecords
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsRecords
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /collections/{catalogId}/items/{recordId}:
+    parameters:
+      - {$ref: '#/components/parameters/CatalogId'}
+      - {$ref: '#/components/parameters/RecordId'}
+    get:
+      operationId: getRecord
+      responses:
+        '200':
+          description: Record
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/geo+json:
+              schema: {$ref: '#/components/schemas/Record'}
+        default: {$ref: '#/components/responses/Problem'}
+    put:
+      operationId: putRecord
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/geo+json:
+            schema: {$ref: '#/components/schemas/Record'}
+          application/json:
+            schema: {$ref: '#/components/schemas/Record'}
+      responses:
+        '201':
+          description: Record created
+          headers:
+            Location: {schema: {type: string, format: uri}}
+            ETag: {schema: {type: string}}
+          content:
+            application/geo+json:
+              schema: {$ref: '#/components/schemas/Record'}
+        '204':
+          description: Record replaced
+          headers:
+            ETag: {schema: {type: string}}
+        default: {$ref: '#/components/responses/Problem'}
+    patch:
+      operationId: patchRecord
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        '204':
+          description: Record patched
+          headers:
+            ETag: {schema: {type: string}}
+        default: {$ref: '#/components/responses/Problem'}
+    delete:
+      operationId: deleteRecord
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+      responses:
+        '204': {description: Record deleted}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headRecord
+      responses:
+        '200':
+          description: Record metadata
+          headers:
+            ETag: {schema: {type: string}}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsRecord
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /collections/{catalogId}/sortables:
+    parameters:
+      - {$ref: '#/components/parameters/CatalogId'}
+    get:
+      operationId: getSortables
+      responses:
+        '200':
+          description: Sortable properties
+          content:
+            application/schema+json:
+              schema: {$ref: '#/components/schemas/Sortables'}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headSortables
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsSortables
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /collections/{catalogId}/queryables:
+    parameters:
+      - {$ref: '#/components/parameters/CatalogId'}
+    get:
+      operationId: getQueryables
+      responses:
+        '200':
+          description: Queryable properties
+          content:
+            application/schema+json:
+              schema: {$ref: '#/components/schemas/Queryables'}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headQueryables
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsQueryables
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /collections/{catalogId}/facets:
+    parameters:
+      - {$ref: '#/components/parameters/CatalogId'}
+    get:
+      operationId: getFacets
+      responses:
+        '200':
+          description: Facet definitions
+          content:
+            application/facets+json:
+              schema: {$ref: '#/components/schemas/Facets'}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headFacets
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsFacets
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /collections/{catalogId}/schema:
+    parameters:
+      - {$ref: '#/components/parameters/CatalogId'}
+    get:
+      operationId: getRecordSchema
+      parameters:
+        - {$ref: '#/components/parameters/SchemaType'}
+      responses:
+        '200':
+          description: Record schema
+          content:
+            application/schema+json:
+              schema: {type: object, additionalProperties: true}
+        default: {$ref: '#/components/responses/Problem'}
+    head:
+      operationId: headRecordSchema
+      responses:
+        '200': {$ref: '#/components/responses/Empty'}
+        default: {$ref: '#/components/responses/Problem'}
+    options:
+      operationId: optionsRecordSchema
+      responses:
+        '204': {$ref: '#/components/responses/Options'}
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        '200':
+          description: Process health
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+  /readyz:
+    get:
+      operationId: ready
+      responses:
+        '200':
+          description: Storage readiness
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+        '503':
+          description: Storage unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    CatalogId:
+      name: catalogId
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    RecordId:
+      name: recordId
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    Bbox:
+      name: bbox
+      in: query
+      style: form
+      explode: false
+      schema:
+        type: array
+        minItems: 4
+        maxItems: 6
+        items: {type: number, format: double}
+    Datetime:
+      name: datetime
+      in: query
+      schema: {type: string}
+    Q:
+      name: q
+      in: query
+      style: form
+      explode: false
+      schema: {type: array, items: {type: string}}
+    Type:
+      name: type
+      in: query
+      style: form
+      explode: false
+      schema: {type: array, items: {type: string}}
+    Ids:
+      name: ids
+      in: query
+      style: form
+      explode: false
+      schema: {type: array, items: {type: string}}
+    ExternalIds:
+      name: externalIds
+      in: query
+      style: form
+      explode: false
+      schema: {type: array, items: {type: string}}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 0, maximum: 10000, default: 10}
+    Sortby:
+      name: sortby
+      in: query
+      style: form
+      explode: false
+      schema: {type: array, items: {type: string}}
+    Cursor:
+      name: cursor
+      in: query
+      schema: {type: string}
+    Filter:
+      name: filter
+      in: query
+      schema: {type: string}
+    FilterLang:
+      name: filter-lang
+      in: query
+      schema: {type: string, enum: [cql2-text], default: cql2-text}
+    Facets:
+      x-go-name: FacetsParameter
+      name: facets
+      in: query
+      allowEmptyValue: true
+      schema: {type: string}
+    SchemaType:
+      name: type
+      in: query
+      description: Mutation operation for which the receivable schema is requested.
+      schema: {type: string, enum: [create, replace, update], default: replace}
+    IfMatch:
+      name: If-Match
+      in: header
+      schema: {type: string}
+  responses:
+    Empty:
+      description: Headers for the corresponding GET response
+    Options:
+      description: Supported methods
+      headers:
+        Allow: {schema: {type: string}}
+    Problem:
+      description: Error response
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+  schemas:
+    Link:
+      type: object
+      required: [href, rel]
+      properties:
+        href: {type: string, format: uri-reference}
+        rel: {type: string}
+        type: {type: string}
+        title: {type: string}
+      additionalProperties: true
+    LandingPage:
+      type: object
+      required: [title, links]
+      properties:
+        title: {type: string}
+        description: {type: string}
+        links: {type: array, items: {$ref: '#/components/schemas/Link'}}
+    Conformance:
+      type: object
+      required: [conformsTo]
+      properties:
+        conformsTo: {type: array, items: {type: string, format: uri}}
+    Catalog:
+      type: object
+      required: [id, type, itemType, links]
+      properties:
+        id: {type: string}
+        type: {type: string, enum: [Collection]}
+        itemType: {type: string, enum: [record]}
+        title: {type: string}
+        description: {type: string}
+        extent: {type: object, additionalProperties: true}
+        links: {type: array, items: {$ref: '#/components/schemas/Link'}}
+        conformsTo: {type: array, items: {type: string}}
+        supportsNonAutogeneratedResourceIds: {type: boolean}
+      additionalProperties: true
+    CatalogCollection:
+      type: object
+      required: [collections, links, numberMatched, numberReturned]
+      properties:
+        collections: {type: array, items: {$ref: '#/components/schemas/Catalog'}}
+        links: {type: array, items: {$ref: '#/components/schemas/Link'}}
+        numberMatched: {type: integer, format: int64, minimum: 0}
+        numberReturned: {type: integer, minimum: 0}
+    Record:
+      type: object
+      required: [type, geometry, properties]
+      properties:
+        id: {type: string, readOnly: true}
+        type: {type: string, enum: [Feature]}
+        geometry:
+          type: object
+          nullable: true
+          additionalProperties: true
+        properties:
+          type: object
+          required: [type]
+          properties:
+            type: {type: string}
+            title: {type: string}
+            description: {type: string}
+            keywords: {type: array, items: {type: string}}
+            created: {type: string, format: date-time, readOnly: true}
+            updated: {type: string, format: date-time, readOnly: true}
+          additionalProperties: true
+        time:
+          type: object
+          allOf:
+            - {$ref: '#/components/schemas/RecordTime'}
+          nullable: true
+        links: {type: array, items: {$ref: '#/components/schemas/Link'}}
+        conformsTo: {type: array, items: {type: string}}
+        externalIds:
+          type: array
+          items:
+            type: object
+            required: [value]
+            properties:
+              scheme: {type: string}
+              value: {type: string}
+      additionalProperties: true
+    RecordTime:
+      type: object
+      oneOf:
+        - {required: [date]}
+        - {required: [timestamp]}
+        - {required: [interval]}
+      properties:
+        date: {type: string, format: date}
+        timestamp: {type: string, format: date-time}
+        interval:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: string
+            description: A date, timestamp, or the open endpoint marker '..'.
+        resolution: {type: string}
+      additionalProperties: true
+    FacetBucket:
+      type: object
+      required: [count]
+      properties:
+        value: {}
+        min: {}
+        max: {}
+        count: {type: integer, format: int64, minimum: 0}
+    FacetResult:
+      type: object
+      required: [type, property, buckets]
+      properties:
+        type: {type: string, enum: [term, histogram, filter]}
+        property: {type: string}
+        buckets: {type: array, items: {$ref: '#/components/schemas/FacetBucket'}}
+        more: {type: boolean}
+    RecordCollection:
+      type: object
+      required: [type, features, links, numberMatched, numberReturned]
+      properties:
+        type: {type: string, enum: [FeatureCollection]}
+        features: {type: array, items: {$ref: '#/components/schemas/Record'}}
+        links: {type: array, items: {$ref: '#/components/schemas/Link'}}
+        timeStamp: {type: string, format: date-time}
+        numberMatched: {type: integer, format: int64, minimum: 0}
+        numberReturned: {type: integer, minimum: 0}
+        facets:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/FacetResult'}
+    Queryables:
+      type: object
+      required: [$schema, type, title, properties]
+      properties:
+        $schema: {type: string, format: uri}
+        $id: {type: string, format: uri}
+        type: {type: string, enum: [object]}
+        title: {type: string}
+        properties: {type: object, additionalProperties: true}
+      additionalProperties: true
+    Sortables:
+      type: object
+      required: [$schema, type, title, properties]
+      properties:
+        $schema: {type: string, format: uri}
+        $id: {type: string, format: uri}
+        type: {type: string, enum: [object]}
+        title: {type: string}
+        properties: {type: object, additionalProperties: true}
+      additionalProperties: true
+    Facets:
+      type: object
+      required: [facets]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        facets: {type: object, additionalProperties: true}
+        defaultBucketCount: {type: integer, minimum: 1, default: 10}
+        links: {type: array, items: {$ref: '#/components/schemas/Link'}}
+      additionalProperties: true
+    Problem:
+      type: object
+      required: [type, title, status, code, description]
+      properties:
+        type: {type: string, format: uri-reference}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        instance: {type: string, format: uri-reference}
+        code: {type: string}
+        description: {type: string}
+      additionalProperties: true
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string}

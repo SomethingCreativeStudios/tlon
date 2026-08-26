@@ -1,0 +1,8 @@
+/bin/
+/dist/
+/tlon
+/.env
+/.idea/
+/.vscode/
+*.out
+coverage.*

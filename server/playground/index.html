@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Tlon playground</title>
+    <link rel="stylesheet" href="/playground/styles.css">
+    <script src="/playground/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/playground" aria-label="Tlon playground home">
+        <span class="brand-mark">T</span>
+        <span><strong>Tlon</strong><small>Records playground</small></span>
+      </a>
+      <nav class="top-links" aria-label="Service links">
+        <a href="../api" target="_blank" rel="noreferrer">OpenAPI</a>
+        <a href="../conformance" target="_blank" rel="noreferrer">Conformance</a>
+        <span id="service-status" class="status pending"><i></i> Connecting</span>
+      </nav>
+    </header>
+
+    <div class="shell">
+      <aside class="catalog-pane">
+        <div class="pane-heading">
+          <div>
+            <span class="eyebrow">Browse</span>
+            <h2>Collections</h2>
+          </div>
+          <button id="refresh-catalogs" class="icon-button" type="button" title="Refresh collections" aria-label="Refresh collections">↻</button>
+        </div>
+        <div id="catalog-count" class="muted compact">Loading…</div>
+        <div id="catalog-list" class="catalog-list" aria-live="polite"></div>
+      </aside>
+
+      <main>
+        <section id="empty-state" class="empty-state">
+          <span class="empty-glyph">⌁</span>
+          <h2>Choose a collection</h2>
+          <p>Explore live records, searches, facet buckets, and the catalog's supporting metadata.</p>
+        </section>
+
+        <section id="workspace" class="workspace hidden">
+          <header class="collection-header">
+            <div>
+              <span id="catalog-id" class="eyebrow"></span>
+              <h1 id="catalog-title"></h1>
+              <p id="catalog-description" class="collection-description"></p>
+            </div>
+            <a id="catalog-api-link" class="button subtle" target="_blank" rel="noreferrer">Open JSON ↗</a>
+          </header>
+
+          <nav id="tabs" class="tabs" aria-label="Collection views">
+            <button type="button" data-view="records" class="active">Records</button>
+            <button type="button" data-view="catalog">Catalog</button>
+            <button type="button" data-view="facets">Facet definitions</button>
+            <button type="button" data-view="queryables">Queryables</button>
+            <button type="button" data-view="sortables">Sortables</button>
+            <button type="button" data-view="schema">Schema</button>
+          </nav>
+
+          <section id="records-view" class="view-panel">
+            <form id="search-form" class="search-panel">
+              <div class="search-heading">
+                <div>
+                  <span class="eyebrow">Live query</span>
+                  <h2>Search records</h2>
+                </div>
+                <div class="form-actions">
+                  <button id="reset-search" class="button subtle" type="button">Reset</button>
+                  <button class="button primary" type="submit">Run search</button>
+                </div>
+              </div>
+
+              <div class="field-grid">
+                <label class="field field-wide">
+                  <span>Text</span>
+                  <input id="query-q" name="q" type="search" placeholder="climate, ocean, transport…">
+                </label>
+                <label class="field">
+                  <span>Record type</span>
+                  <input id="query-type" name="type" placeholder="dataset,service">
+                </label>
+                <label class="field">
+                  <span>Datetime</span>
+                  <input id="query-datetime" name="datetime" placeholder="2024-01-01/..">
+                </label>
+                <label class="field field-wide">
+                  <span>Bounding box</span>
+                  <input id="query-bbox" name="bbox" placeholder="-80,35,-70,45">
+                </label>
+                <label class="field">
+                  <span>Sort</span>
+                  <select id="query-sort" name="sortby"></select>
+                </label>
+                <label class="field">
+                  <span>Page size</span>
+                  <select id="query-limit" name="limit">
+                    <option value="0">0 — counts only</option>
+                    <option value="10" selected>10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+                <div class="field field-full">
+                  <label for="query-filter">CQL2 Text <small>queryables-aware</small></label>
+                  <div class="cql-editor">
+                    <input id="query-filter" name="filter" type="text" spellcheck="false" autocomplete="off"
+                      role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
+                      aria-expanded="false" aria-controls="cql-suggestions"
+                      placeholder="score &gt;= 80 AND organization = 'NOAA'">
+                    <div id="cql-suggestions" class="cql-suggestions hidden" role="listbox" aria-label="CQL2 suggestions"></div>
+                  </div>
+                  <span class="field-hint">Start typing a property, or press Ctrl+Space to browse available queryables.</span>
+                </div>
+                <fieldset class="facet-mode field-full">
+                  <legend>Facet response</legend>
+                  <label><input type="radio" name="facet-mode" value="default" checked> Catalog defaults</label>
+                  <label><input type="radio" name="facet-mode" value="all"> All configured</label>
+                  <label><input type="radio" name="facet-mode" value="none"> None</label>
+                </fieldset>
+              </div>
+            </form>
+
+            <div id="request-error" class="notice error hidden" role="alert"></div>
+            <div class="request-strip">
+              <span>GET</span>
+              <code id="request-url"></code>
+              <button id="copy-url" class="text-button" type="button">Copy</button>
+            </div>
+
+            <div class="result-heading">
+              <div>
+                <span class="eyebrow">Response</span>
+                <h2 id="result-summary">Waiting for a search</h2>
+              </div>
+              <div class="pager">
+                <button id="previous-page" class="button subtle" type="button" disabled>← Previous</button>
+                <button id="next-page" class="button subtle" type="button" disabled>Next →</button>
+              </div>
+            </div>
+
+            <div class="results-layout">
+              <section>
+                <div id="record-list" class="record-list"></div>
+              </section>
+              <aside>
+                <div class="facet-heading">
+                  <h3>Facets</h3>
+                  <span id="facet-context" class="muted compact"></span>
+                </div>
+                <div id="facet-results" class="facet-results"></div>
+              </aside>
+            </div>
+          </section>
+
+          <section id="inspector-view" class="view-panel hidden">
+            <div class="inspector-heading">
+              <div>
+                <span id="inspector-eyebrow" class="eyebrow">Collection document</span>
+                <h2 id="inspector-title">Catalog JSON</h2>
+              </div>
+              <a id="inspector-link" class="button subtle" target="_blank" rel="noreferrer">Open endpoint ↗</a>
+            </div>
+            <div id="definition-cards" class="definition-grid hidden"></div>
+            <pre id="inspector-json" class="json-view"></pre>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="record-dialog">
+      <div class="dialog-heading">
+        <div>
+          <span class="eyebrow">Record document</span>
+          <h2 id="dialog-title">Record</h2>
+        </div>
+        <button id="close-dialog" class="icon-button" type="button" aria-label="Close record">×</button>
+      </div>
+      <pre id="dialog-json" class="json-view"></pre>
+    </dialog>
+  </body>
+</html>
