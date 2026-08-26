@@ -40,6 +40,9 @@ type SortField struct {
 }
 
 const (
+	StorageTransactional = "transactional"
+	StorageTemporal      = "temporal"
+
 	FacetTerm      = "term"
 	FacetHistogram = "histogram"
 	FacetFilter    = "filter"
@@ -47,6 +50,29 @@ const (
 	BucketFixedInterval = "fixedInterval"
 	BucketFixedCount    = "fixedBucketCount"
 )
+
+// CatalogStorage selects the physical persistence strategy for every record
+// in a catalog. Transactional storage accepts the complete Records model.
+// Temporal storage requires a record time with a closed start and uses that
+// start as an immutable TimescaleDB partition key.
+type CatalogStorage struct {
+	Class            string         `json:"class"`
+	AutoFacetIndexes *bool          `json:"autoFacetIndexes,omitempty"`
+	Indexes          []CatalogIndex `json:"indexes,omitempty"`
+}
+
+// CatalogIndex describes a workload-specific B-tree index. Properties refer
+// only to validated catalog queryables; datastore implementations own the SQL
+// representation and never accept SQL in a catalog bundle.
+type CatalogIndex struct {
+	Name string     `json:"name"`
+	Keys []IndexKey `json:"keys"`
+}
+
+type IndexKey struct {
+	Property  string `json:"property"`
+	Direction string `json:"direction,omitempty"`
+}
 
 type FacetDefinition struct {
 	Title       string            `json:"title,omitempty"`
@@ -66,6 +92,7 @@ type FacetDefinition struct {
 // `tlon catalog apply`.
 type CatalogBundle struct {
 	Catalog          json.RawMessage            `json:"catalog"`
+	Storage          CatalogStorage             `json:"storage"`
 	Queryables       map[string]Queryable       `json:"queryables"`
 	Sortables        map[string]Sortable        `json:"sortables"`
 	DefaultSortOrder []SortField                `json:"defaultSortOrder"`
@@ -113,6 +140,14 @@ type StoredRecord struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	SortValues []any
+}
+
+// RecordInput is a client-identified record used by trusted bulk-ingest tools.
+// Implementations must apply the same validation and managed-field rules as a
+// normal client-ID PUT.
+type RecordInput struct {
+	ID       string
+	Document json.RawMessage
 }
 
 type FacetBucket struct {

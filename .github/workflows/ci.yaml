@@ -39,13 +39,11 @@ jobs:
         with:
           go-version: '1.27.x'
           cache: true
-      - name: Build PostGIS test image
-        run: docker build -f docker/postgis/Dockerfile -t tlon-postgis:test .
       - name: Start database
-        run: docker run -d --name tlon-postgis -e POSTGRES_DB=tlon -e POSTGRES_USER=tlon -e POSTGRES_PASSWORD=tlon -p 5432:5432 tlon-postgis:test
+        run: docker run -d --name tlon-timescale -e POSTGRES_DB=tlon -e POSTGRES_USER=tlon -e POSTGRES_PASSWORD=tlon -p 5432:5432 timescale/timescaledb-ha:pg18.4-ts2.29.2-oss
       - name: Wait for database
-        run: for i in $(seq 1 60); do docker exec tlon-postgis pg_isready -U tlon -d tlon && exit 0; sleep 2; done; exit 1
-      - name: PostgreSQL/PostGIS tests
+        run: for i in $(seq 1 60); do docker exec tlon-timescale pg_isready -U tlon -d tlon && exit 0; sleep 2; done; exit 1
+      - name: PostgreSQL/PostGIS/TimescaleDB tests
         env:
           TLON_TEST_DATABASE_URL: postgres://tlon:tlon@localhost:5432/tlon?sslmode=disable
         run: go test -tags=integration -count=1 ./...

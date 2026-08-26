@@ -18,6 +18,7 @@ import (
 	"github.com/SomethingCreativeStudios/tlon/auth"
 	"github.com/SomethingCreativeStudios/tlon/config"
 	"github.com/SomethingCreativeStudios/tlon/demo"
+	"github.com/SomethingCreativeStudios/tlon/loadtest"
 	"github.com/SomethingCreativeStudios/tlon/postgres"
 	"github.com/SomethingCreativeStudios/tlon/server"
 	"github.com/SomethingCreativeStudios/tlon/store"
@@ -45,6 +46,8 @@ func run(args []string) error {
 		return catalogCommand(args[1:])
 	case "demo":
 		return demoCommand(args[1:])
+	case "load":
+		return loadCommand(args[1:])
 	case "healthcheck":
 		return healthcheck(args[1:])
 	case "version":
@@ -56,7 +59,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: tlon <serve|migrate|catalog|demo|healthcheck|version> [arguments]")
+	return fmt.Errorf("usage: tlon <serve|migrate|catalog|demo|load|healthcheck|version> [arguments]")
 }
 
 func serve(args []string) error {
@@ -149,7 +152,7 @@ func migrate(args []string) error {
 
 func catalogCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: tlon catalog <apply|get|list|delete>")
+		return fmt.Errorf("usage: tlon catalog <apply|get|list|indexes|delete>")
 	}
 	operation := args[0]
 	flags := flag.NewFlagSet("catalog "+operation, flag.ContinueOnError)
@@ -212,13 +215,22 @@ func catalogCommand(args []string) error {
 			summaries = append(summaries, map[string]any{"id": value.ID, "title": doc["title"]})
 		}
 		return writeJSON(summaries)
+	case "indexes":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: tlon catalog indexes [--database-url URL] ID")
+		}
+		indexes, err := database.CatalogIndexes(ctx, rest[0])
+		if err != nil {
+			return err
+		}
+		return writeJSON(indexes)
 	case "delete":
 		if len(rest) != 1 {
 			return fmt.Errorf("usage: tlon catalog delete [--database-url URL] [--cascade] ID")
 		}
 		return database.DeleteCatalog(ctx, rest[0], *cascade)
 	default:
-		return fmt.Errorf("usage: tlon catalog <apply|get|list|delete>")
+		return fmt.Errorf("usage: tlon catalog <apply|get|list|indexes|delete>")
 	}
 }
 
@@ -257,6 +269,119 @@ func demoCommand(args []string) error {
 		return err
 	}
 	fmt.Printf("seeded catalog %s with %d records (%d created, %d replaced; seed %d)\n", result.CatalogID, result.Created+result.Replaced, result.Created, result.Replaced, result.Seed)
+	return nil
+}
+
+func loadCommand(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: tlon load <seed|configure> [arguments]")
+	}
+	if args[0] == "configure" {
+		return loadConfigureCommand(args[1:])
+	}
+	if args[0] != "seed" {
+		return fmt.Errorf("usage: tlon load <seed|configure> [arguments]")
+	}
+	flags := flag.NewFlagSet("load seed", flag.ContinueOnError)
+	databaseURL := flags.String("database-url", os.Getenv("TLON_DATABASE_URL"), "PostgreSQL connection URL")
+	storageClass := flags.String("storage", loadtest.SelectionBoth, "storage classes to populate: both, transactional, or temporal")
+	count := flags.Int("count", loadtest.DefaultCount, "number of records per catalog")
+	batchSize := flags.Int("batch-size", loadtest.DefaultBatchSize, "records per COPY transaction")
+	catalogPrefix := flags.String("catalog-prefix", loadtest.DefaultCatalogPrefix, "prefix for generated catalog identifiers")
+	seed := flags.Int64("seed", loadtest.DefaultSeed, "content generation seed")
+	startValue := flags.String("start", "2020-01-01T00:00:00Z", "beginning of the generated observation range")
+	spanDays := flags.Int("span-days", loadtest.DefaultSpanDays, "days covered by generated observations")
+	reset := flags.Bool("reset", false, "delete and recreate selected load-test catalogs")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if len(flags.Args()) != 0 {
+		return fmt.Errorf("unexpected load arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if *databaseURL == "" {
+		return fmt.Errorf("--database-url or TLON_DATABASE_URL is required")
+	}
+	start, err := time.Parse(time.RFC3339, *startValue)
+	if err != nil {
+		return fmt.Errorf("--start must be RFC3339: %w", err)
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	database, err := postgres.Open(ctx, *databaseURL, postgres.Options{})
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	lastReport := map[string]time.Time{}
+	result, err := loadtest.Seed(ctx, database, loadtest.Options{
+		CatalogPrefix: *catalogPrefix,
+		Storage:       *storageClass,
+		Count:         *count,
+		BatchSize:     *batchSize,
+		Seed:          *seed,
+		Start:         start,
+		SpanDays:      *spanDays,
+		Reset:         *reset,
+		Progress: func(progress loadtest.Progress) {
+			now := time.Now()
+			if progress.Completed != progress.Total && now.Sub(lastReport[progress.CatalogID]) < 2*time.Second {
+				return
+			}
+			lastReport[progress.CatalogID] = now
+			fmt.Printf("%s: %d/%d records (%.0f records/s)\n", progress.CatalogID, progress.Completed, progress.Total, progress.RecordsPerS)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	for _, catalog := range result.Catalogs {
+		fmt.Printf("seeded %s (%s): %d records in %s (%.0f records/s); analyzed in %s\n", catalog.CatalogID, catalog.Storage, catalog.Records, catalog.Duration.Round(time.Millisecond), catalog.RecordsPerS, catalog.AnalyzeDuration.Round(time.Millisecond))
+	}
+	fmt.Printf("seeded %d total records in %s\n", result.Records, result.Duration.Round(time.Millisecond))
+	return nil
+}
+
+func loadConfigureCommand(args []string) error {
+	flags := flag.NewFlagSet("load configure", flag.ContinueOnError)
+	databaseURL := flags.String("database-url", os.Getenv("TLON_DATABASE_URL"), "PostgreSQL connection URL")
+	storageClass := flags.String("storage", loadtest.SelectionBoth, "storage classes to configure: both, transactional, or temporal")
+	catalogPrefix := flags.String("catalog-prefix", loadtest.DefaultCatalogPrefix, "prefix for generated catalog identifiers")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if len(flags.Args()) != 0 {
+		return fmt.Errorf("unexpected load configure arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if *databaseURL == "" {
+		return fmt.Errorf("--database-url or TLON_DATABASE_URL is required")
+	}
+	var classes []string
+	switch *storageClass {
+	case loadtest.SelectionBoth:
+		classes = []string{store.StorageTransactional, store.StorageTemporal}
+	case store.StorageTransactional, store.StorageTemporal:
+		classes = []string{*storageClass}
+	default:
+		return fmt.Errorf("--storage must be %q, %q, or %q", loadtest.SelectionBoth, store.StorageTransactional, store.StorageTemporal)
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	database, err := postgres.Open(ctx, *databaseURL, postgres.Options{})
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	for _, class := range classes {
+		catalogID := *catalogPrefix + "-" + class
+		bundle, err := loadtest.Bundle(catalogID, class)
+		if err != nil {
+			return err
+		}
+		if _, err := database.ApplyCatalog(ctx, bundle); err != nil {
+			return fmt.Errorf("configure load catalog %q: %w", catalogID, err)
+		}
+		fmt.Printf("configured catalog %s (%s)\n", catalogID, class)
+	}
 	return nil
 }
 

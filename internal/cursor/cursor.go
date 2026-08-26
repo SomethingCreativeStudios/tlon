@@ -35,6 +35,10 @@ func Scope(search store.Search) (string, error) {
 	copy := search
 	copy.Position = nil
 	copy.Limit = 0
+	// Facet selection changes only response enrichment, not the filtered or
+	// sorted record sequence. Allow clients to suppress repeated facet work
+	// while traversing an existing cursor.
+	copy.Facets = nil
 	b, err := json.Marshal(copy)
 	if err != nil {
 		return "", err

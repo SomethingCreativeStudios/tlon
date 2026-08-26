@@ -1,0 +1,80 @@
+{
+  "catalog": {
+    "id": "events",
+    "type": "Collection",
+    "itemType": "record",
+    "title": "High-volume event records",
+    "description": "Generic time-oriented records stored in a TimescaleDB hypertable.",
+    "extent": {
+      "spatial": {"bbox": [[-180, -90, 180, 90]]},
+      "temporal": {"interval": [["2020-01-01T00:00:00Z", ".."]]}
+    }
+  },
+  "storage": {
+    "class": "temporal",
+    "autoFacetIndexes": true,
+    "indexes": [
+      {
+        "name": "source-category-value",
+        "keys": [
+          {"property": "source"},
+          {"property": "category"},
+          {"property": "value"}
+        ]
+      },
+      {
+        "name": "source-updated",
+        "keys": [
+          {"property": "source"},
+          {"property": "updated", "direction": "desc"},
+          {"property": "id"}
+        ]
+      }
+    ]
+  },
+  "queryables": {
+    "source": {"title": "Source", "type": "string", "x-tlon-path": "/properties/source"},
+    "category": {"title": "Category", "type": "string", "x-tlon-path": "/properties/category"},
+    "value": {"title": "Value", "type": "number", "x-tlon-path": "/properties/value"}
+  },
+  "sortables": {
+    "title": {"type": "string", "x-tlon-path": "/properties/title"},
+    "value": {"type": "number", "x-tlon-path": "/properties/value"},
+    "updated": {"type": "string", "format": "date-time", "x-tlon-path": "/properties/updated"}
+  },
+  "defaultSortOrder": [{"property": "updated", "direction": "desc"}],
+  "facets": {
+    "sources": {"type": "term", "property": "source", "default": true, "bucketCount": 20, "sortedBy": "count", "minOccurs": 1},
+    "categories": {"type": "term", "property": "category", "default": true, "bucketCount": 20, "sortedBy": "count", "minOccurs": 1},
+    "values": {"type": "histogram", "property": "value", "bucketType": "fixedBucketCount", "bucketCount": 10}
+  },
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["type", "geometry", "time", "properties"],
+    "properties": {
+      "type": {"const": "Feature"},
+      "geometry": {"type": ["object", "null"]},
+      "time": {
+        "type": "object",
+        "oneOf": [
+          {"required": ["timestamp"], "properties": {"timestamp": {"type": "string", "format": "date-time"}}},
+          {"required": ["interval"], "properties": {"interval": {"type": "array", "minItems": 2, "maxItems": 2}}}
+        ]
+      },
+      "properties": {
+        "type": "object",
+        "required": ["type", "title"],
+        "properties": {
+          "type": {"type": "string"},
+          "title": {"type": "string", "minLength": 1},
+          "source": {"type": "string"},
+          "category": {"type": "string"},
+          "value": {"type": "number"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "additionalProperties": true
+  }
+}

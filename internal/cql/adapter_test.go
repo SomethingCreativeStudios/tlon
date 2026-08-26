@@ -44,4 +44,14 @@ func TestCompileTimestampRangeUsedByPlaygroundFacets(t *testing.T) {
 	if len(fragment.Args) != 2 {
 		t.Fatalf("timestamp arguments = %#v", fragment.Args)
 	}
+	if !strings.Contains(fragment.SQL, "public.tlon_rfc3339_timestamptz") {
+		t.Fatalf("timestamp SQL does not use immutable parser: %s", fragment.SQL)
+	}
+	indexed, err := IndexSQL("observed", queryables["observed"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(indexed, "r.") || !strings.Contains(indexed, "public.tlon_rfc3339_timestamptz") {
+		t.Fatalf("timestamp index SQL = %s", indexed)
+	}
 }

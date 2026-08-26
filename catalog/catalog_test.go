@@ -29,6 +29,74 @@ func TestNormalizeBundle(t *testing.T) {
 	if len(bundle.Schema) == 0 {
 		t.Error("default record schema not added")
 	}
+	if bundle.Storage.Class != store.StorageTransactional {
+		t.Errorf("default storage class = %q", bundle.Storage.Class)
+	}
+	if bundle.Storage.AutoFacetIndexes == nil || !*bundle.Storage.AutoFacetIndexes {
+		t.Error("automatic facet indexes are not enabled by default")
+	}
+}
+
+func TestNormalizeStorageIndexes(t *testing.T) {
+	bundle := validBundle()
+	bundle.Storage.Indexes = []store.CatalogIndex{{
+		Name: "score-updated",
+		Keys: []store.IndexKey{{Property: "score"}, {Property: "updated", Direction: "DESC"}},
+	}}
+	normalized, _, err := Normalize(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := normalized.Storage.Indexes[0].Keys
+	if keys[0].Direction != "asc" || keys[1].Direction != "desc" {
+		t.Fatalf("normalized keys = %#v", keys)
+	}
+}
+
+func TestRejectInvalidStorageIndexes(t *testing.T) {
+	tests := []struct {
+		name  string
+		index store.CatalogIndex
+	}{
+		{name: "missing name", index: store.CatalogIndex{Keys: []store.IndexKey{{Property: "score"}}}},
+		{name: "missing keys", index: store.CatalogIndex{Name: "empty"}},
+		{name: "unknown queryable", index: store.CatalogIndex{Name: "unknown", Keys: []store.IndexKey{{Property: "missing"}}}},
+		{name: "invalid direction", index: store.CatalogIndex{Name: "direction", Keys: []store.IndexKey{{Property: "score", Direction: "sideways"}}}},
+		{name: "repeated property", index: store.CatalogIndex{Name: "repeat", Keys: []store.IndexKey{{Property: "score"}, {Property: "score"}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bundle := validBundle()
+			bundle.Storage.Indexes = []store.CatalogIndex{test.index}
+			if _, _, err := Normalize(bundle); err == nil {
+				t.Fatal("invalid storage index accepted")
+			}
+		})
+	}
+
+	bundle := validBundle()
+	bundle.Queryables["keywords"] = store.Queryable{Type: "array", Items: &store.Queryable{Type: "string"}, Path: "/properties/keywords"}
+	bundle.Storage.Indexes = []store.CatalogIndex{{Name: "keywords", Keys: []store.IndexKey{{Property: "keywords"}}}}
+	if _, _, err := Normalize(bundle); err == nil {
+		t.Fatal("array storage index accepted")
+	}
+}
+
+func TestNormalizeTemporalStorage(t *testing.T) {
+	bundle := validBundle()
+	bundle.Storage.Class = store.StorageTemporal
+	normalized, _, err := Normalize(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Storage.Class != store.StorageTemporal {
+		t.Errorf("storage class = %q", normalized.Storage.Class)
+	}
+
+	bundle.Storage.Class = "observations"
+	if _, _, err := Normalize(bundle); err == nil {
+		t.Fatal("unknown storage class accepted")
+	}
 }
 func TestRejectInvalidFacetConfiguration(t *testing.T) {
 	bundle := validBundle()

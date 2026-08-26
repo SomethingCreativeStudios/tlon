@@ -6,6 +6,7 @@
     catalog: null,
     metadata: {},
     response: null,
+    savedFacets: {},
     pageURLs: { next: null, prev: null },
     activeView: "records",
     cqlItems: [],
@@ -136,6 +137,7 @@
       ]);
       state.catalog = catalog;
       state.metadata = { catalog, queryables, sortables, facets, schema };
+      state.savedFacets = {};
       renderCatalogs();
       elements.emptyState.classList.add("hidden");
       elements.workspace.classList.remove("hidden");
@@ -363,7 +365,12 @@
   async function runSearch(url) {
     if (!state.catalog) return;
     clearError();
-    const requestURL = url || buildSearchURL();
+    const paging = Boolean(url);
+    const requestURL = paging ? new URL(url.href) : buildSearchURL();
+    // Facets describe the complete filtered result and do not change between
+    // pages. Keep the first response visible and suppress repeated aggregation
+    // work while following next/previous cursors.
+    if (paging) requestURL.searchParams.set("facets", "");
     elements.requestURL.textContent = `${requestURL.pathname}${requestURL.search}`;
     elements.resultSummary.textContent = "Loading…";
     elements.previousPage.disabled = true;
@@ -375,6 +382,7 @@
         next: responseLink(data.links, "next"),
         prev: responseLink(data.links, "prev"),
       };
+      if (!paging) state.savedFacets = data.facets || {};
       renderResponse(data);
     } catch (error) {
       elements.resultSummary.textContent = "Search failed";
@@ -396,7 +404,7 @@
     elements.previousPage.disabled = !state.pageURLs.prev;
     elements.nextPage.disabled = !state.pageURLs.next;
     renderRecords(data.features || []);
-    renderFacets(data.facets || {});
+    renderFacets(state.savedFacets);
   }
 
   function renderRecords(records) {

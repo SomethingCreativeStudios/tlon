@@ -18,11 +18,12 @@ import (
 	"github.com/SomethingCreativeStudios/tlon/application"
 	"github.com/SomethingCreativeStudios/tlon/auth"
 	"github.com/SomethingCreativeStudios/tlon/demo"
+	"github.com/SomethingCreativeStudios/tlon/loadtest"
 	"github.com/SomethingCreativeStudios/tlon/postgres"
 	"github.com/SomethingCreativeStudios/tlon/store"
 )
 
-func TestPostGISStore(t *testing.T) {
+func TestTransactionalStore(t *testing.T) {
 	databaseURL := os.Getenv("TLON_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("TLON_TEST_DATABASE_URL is not set")
@@ -36,13 +37,13 @@ func TestPostGISStore(t *testing.T) {
 	if err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var postgresVersion, postgisVersion string
-	postgresVersion, postgisVersion, err = database.DatabaseVersions(ctx)
+	var postgresVersion, postgisVersion, timescaleVersion string
+	postgresVersion, postgisVersion, timescaleVersion, err = database.DatabaseVersions(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(postgresVersion, "18.") || !strings.HasPrefix(postgisVersion, "3.6") {
-		t.Fatalf("unexpected database versions: PostgreSQL %s, PostGIS %s", postgresVersion, postgisVersion)
+	if !strings.HasPrefix(postgresVersion, "18.") || !strings.HasPrefix(postgisVersion, "3.") || !strings.HasPrefix(timescaleVersion, "2.") {
+		t.Fatalf("unexpected database versions: PostgreSQL %s, PostGIS %s, TimescaleDB %s", postgresVersion, postgisVersion, timescaleVersion)
 	}
 	catalogID := fmt.Sprintf("integration-%d", time.Now().UnixNano())
 	bundle := integrationBundle(catalogID)
@@ -50,6 +51,18 @@ func TestPostGISStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.DeleteCatalog(context.Background(), catalogID, true) })
+	managedIndexes, err := database.CatalogIndexes(ctx, catalogID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(managedIndexes) != 2 {
+		t.Fatalf("automatic catalog indexes = %#v", managedIndexes)
+	}
+	for _, index := range managedIndexes {
+		if !index.Automatic || !index.Ready {
+			t.Fatalf("automatic catalog index is not ready: %#v", index)
+		}
+	}
 	records := map[string]json.RawMessage{
 		"a": record(`{"type":"Feature","geometry":{"type":"Point","coordinates":[175,0]},"time":{"interval":["2024-01-01","2024-12-31"]},"properties":{"type":"dataset","title":"Ocean Data Alpha","description":"Blue water observations","keywords":["ocean","blue"],"organization":"Alpha","score":10},"externalIds":[{"scheme":"doi","value":"abc"}]}`),
 		"b": record(`{"type":"Feature","geometry":{"type":"Point","coordinates":[-175,0]},"time":{"timestamp":"2025-06-01T00:00:00Z"},"properties":{"type":"service","title":"Ocean Service Beta","keywords":["ocean","service"],"organization":"Beta","score":20}}`),
@@ -315,6 +328,187 @@ func TestPostGISStore(t *testing.T) {
 			t.Fatalf("reapply compatible catalog: %v", err)
 		}
 	})
+
+	t.Run("catalog index configuration reconciles", func(t *testing.T) {
+		disabled := false
+		configured := integrationBundle(catalogID)
+		configured.Storage.AutoFacetIndexes = &disabled
+		configured.Storage.Indexes = []store.CatalogIndex{{
+			Name: "organization-score",
+			Keys: []store.IndexKey{{Property: "organization"}, {Property: "score", Direction: "desc"}},
+		}}
+		if _, err := database.ApplyCatalog(ctx, configured); err != nil {
+			t.Fatal(err)
+		}
+		indexes, err := database.CatalogIndexes(ctx, catalogID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(indexes) != 1 || indexes[0].Automatic || !indexes[0].Ready {
+			t.Fatalf("explicit catalog indexes = %#v", indexes)
+		}
+		got, err := database.GetCatalog(ctx, catalogID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Bundle.Storage.AutoFacetIndexes == nil || *got.Bundle.Storage.AutoFacetIndexes || len(got.Bundle.Storage.Indexes) != 1 {
+			t.Fatalf("persisted storage configuration = %#v", got.Bundle.Storage)
+		}
+		if _, err := database.ApplyCatalog(ctx, integrationBundle(catalogID)); err != nil {
+			t.Fatalf("restore automatic indexes: %v", err)
+		}
+	})
+}
+
+func TestTemporalStore(t *testing.T) {
+	databaseURL := os.Getenv("TLON_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TLON_TEST_DATABASE_URL is not set")
+	}
+	ctx := t.Context()
+	database, err := postgres.Open(ctx, databaseURL, postgres.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	catalogID := fmt.Sprintf("temporal-integration-%d", time.Now().UnixNano())
+	bundle := integrationBundle(catalogID)
+	bundle.Storage.Class = store.StorageTemporal
+	if _, err := database.ApplyCatalog(ctx, bundle); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.DeleteCatalog(context.Background(), catalogID, true) })
+
+	gotCatalog, err := database.GetCatalog(ctx, catalogID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCatalog.Bundle.Storage.Class != store.StorageTemporal {
+		t.Fatalf("storage class = %q", gotCatalog.Bundle.Storage.Class)
+	}
+
+	withoutTime := record(`{"type":"Feature","geometry":null,"properties":{"type":"observation","title":"No time"}}`)
+	if _, err := database.CreateRecord(ctx, catalogID, "missing-time", withoutTime); err == nil || !strings.Contains(err.Error(), "closed start") {
+		t.Fatalf("missing time error = %v", err)
+	}
+	openStart := record(`{"type":"Feature","geometry":null,"time":{"interval":["..","2024-01-02T00:00:00Z"]},"properties":{"type":"observation","title":"Open start"}}`)
+	if _, err := database.CreateRecord(ctx, catalogID, "open-start", openStart); err == nil || !strings.Contains(err.Error(), "closed start") {
+		t.Fatalf("open-start time error = %v", err)
+	}
+
+	first := record(`{"type":"Feature","geometry":{"type":"Point","coordinates":[10,20]},"time":{"interval":["2024-01-01T00:00:00Z","2024-12-31T00:00:00Z"]},"properties":{"type":"observation","title":"First","organization":"Alpha","score":10},"externalIds":[{"scheme":"sensor","value":"a"}]}`)
+	second := record(`{"type":"Feature","geometry":null,"time":{"timestamp":"2025-06-01T00:00:00Z"},"properties":{"type":"event","title":"Second","organization":"Beta","score":20}}`)
+	created, err := database.CreateRecord(ctx, catalogID, "first", first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateRecord(ctx, catalogID, "second", second); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := database.SearchRecords(ctx, catalogID, store.Search{Datetime: "2024-06-01", ExternalIDs: []string{"sensor:a"}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIDs(t, result, "first")
+	if result.NumberMatched != 1 || len(result.Facets) == 0 {
+		t.Fatalf("temporal search result = %#v", result)
+	}
+	got, err := database.GetRecord(ctx, catalogID, "first")
+	if err != nil || got.ID != "first" {
+		t.Fatalf("get temporal record = %#v, %v", got, err)
+	}
+
+	replacement := record(`{"type":"Feature","geometry":null,"time":{"interval":["2024-01-01T00:00:00Z","2025-01-31T00:00:00Z"]},"properties":{"type":"observation","title":"First updated","organization":"Alpha","score":11}}`)
+	put, err := database.PutRecord(ctx, catalogID, "first", replacement, &created.Version)
+	if err != nil || put.Record.Version != created.Version+1 {
+		t.Fatalf("replace temporal record = %#v, %v", put, err)
+	}
+	moved := record(`{"type":"Feature","geometry":null,"time":{"timestamp":"2024-02-01T00:00:00Z"},"properties":{"type":"observation","title":"Moved"}}`)
+	if _, err := database.PutRecord(ctx, catalogID, "first", moved, nil); err == nil || !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("changed partition time error = %v", err)
+	}
+
+	transactional := integrationBundle(catalogID)
+	transactional.Storage.Class = store.StorageTransactional
+	if _, err := database.ApplyCatalog(ctx, transactional); err == nil {
+		t.Fatal("changed storage class for non-empty catalog")
+	}
+	if err := database.DeleteRecord(ctx, catalogID, "first", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.DeleteRecord(ctx, catalogID, "second", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ApplyCatalog(ctx, transactional); err != nil {
+		t.Fatalf("change storage class after emptying catalog: %v", err)
+	}
+}
+
+func TestBulkCreateRecords(t *testing.T) {
+	databaseURL := os.Getenv("TLON_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TLON_TEST_DATABASE_URL is not set")
+	}
+	ctx := t.Context()
+	database, err := postgres.Open(ctx, databaseURL, postgres.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, class := range []string{store.StorageTransactional, store.StorageTemporal} {
+		t.Run(class, func(t *testing.T) {
+			catalogID := fmt.Sprintf("bulk-%s-%d", class, time.Now().UnixNano())
+			bundle, err := loadtest.Bundle(catalogID, class)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.ApplyCatalog(ctx, bundle); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = database.DeleteCatalog(context.Background(), catalogID, true) })
+			inputs, err := loadtest.Records(class, 0, 120, 120, 77, time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC), 365)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for start := 0; start < len(inputs); start += 40 {
+				created, err := database.BulkCreateRecords(ctx, catalogID, inputs[start:start+40])
+				if err != nil || created != 40 {
+					t.Fatalf("bulk create at %d = %d, %v", start, created, err)
+				}
+			}
+			emptyFacets := ""
+			result, err := database.SearchRecords(ctx, catalogID, store.Search{Limit: 0, Facets: &emptyFacets})
+			if err != nil || result.NumberMatched != 120 {
+				t.Fatalf("bulk count = %d, %v", result.NumberMatched, err)
+			}
+			stored, err := database.GetRecord(ctx, catalogID, inputs[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document map[string]any
+			if err := json.Unmarshal(stored.Document, &document); err != nil {
+				t.Fatal(err)
+			}
+			if _, retained := document["id"]; retained {
+				t.Fatal("bulk loader retained client-managed id in stored document")
+			}
+			if _, err := database.BulkCreateRecords(ctx, catalogID, inputs[:2]); !errors.Is(err, store.ErrConflict) {
+				t.Fatalf("duplicate batch = %v", err)
+			}
+			result, err = database.SearchRecords(ctx, catalogID, store.Search{Limit: 0, Facets: &emptyFacets})
+			if err != nil || result.NumberMatched != 120 {
+				t.Fatalf("failed batch was not atomic: %d, %v", result.NumberMatched, err)
+			}
+		})
+	}
 }
 
 func TestDemoSeed(t *testing.T) {

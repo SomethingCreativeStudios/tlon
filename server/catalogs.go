@@ -30,7 +30,7 @@ func (s *Service) GetCollections(ctx context.Context, request api.GetCollections
 		last = result.SortValues[len(result.SortValues)-1]
 	}
 	requestURL := requestFrom(ctx).URL
-	links := s.links(requestURL, scope, "$catalogs", search, first, last, result.HasPrev, result.HasNext, "application/json")
+	links := s.links(requestURL, scope, "$catalogs", search, first, last, result.HasPrev, result.HasNext, "application/json", pageLinkOptions{})
 	return api.GetCollections200JSONResponse(api.CatalogCollection{Collections: models, Links: links, NumberMatched: result.NumberMatched, NumberReturned: len(models)}), nil
 }
 func (s *Service) collectionsProblem(ctx context.Context, err error) api.GetCollectionsResponseObject {

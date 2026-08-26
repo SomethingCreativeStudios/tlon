@@ -184,25 +184,32 @@ func (s *Service) catalogSearch(params api.GetCollectionsParams) (store.Search, 
 	return search, scope, nil
 }
 
-func (s *Service) links(ctxURL *url.URL, scope, catalogID string, search store.Search, first, last []any, hasPrev, hasNext bool, mediaType string) []api.Link {
-	links := []api.Link{makeLink(s.publicURL, ctxURL, "self", "", mediaType)}
+type pageLinkOptions struct {
+	suppressFacets bool
+}
+
+func (s *Service) links(ctxURL *url.URL, scope, catalogID string, search store.Search, first, last []any, hasPrev, hasNext bool, mediaType string, options pageLinkOptions) []api.Link {
+	links := []api.Link{makeLink(s.publicURL, ctxURL, "self", "", mediaType, false)}
 	if hasNext && len(last) > 0 {
 		if token, err := s.cursors.Encode(catalogID, scope, search.Sort, store.CursorNext, last); err == nil {
-			links = append(links, makeLink(s.publicURL, ctxURL, "next", token, mediaType))
+			links = append(links, makeLink(s.publicURL, ctxURL, "next", token, mediaType, options.suppressFacets))
 		}
 	}
 	if hasPrev && len(first) > 0 {
 		if token, err := s.cursors.Encode(catalogID, scope, search.Sort, store.CursorPrev, first); err == nil {
-			links = append(links, makeLink(s.publicURL, ctxURL, "prev", token, mediaType))
+			links = append(links, makeLink(s.publicURL, ctxURL, "prev", token, mediaType, options.suppressFacets))
 		}
 	}
 	return links
 }
-func makeLink(publicURL string, current *url.URL, rel, token, mediaType string) api.Link {
+func makeLink(publicURL string, current *url.URL, rel, token, mediaType string, suppressFacets bool) api.Link {
 	copy := *current
 	query := copy.Query()
 	if token != "" {
 		query.Set("cursor", token)
+		if suppressFacets {
+			query.Set("facets", "")
+		}
 	}
 	copy.RawQuery = query.Encode()
 	href := strings.TrimRight(publicURL, "/") + copy.EscapedPath()

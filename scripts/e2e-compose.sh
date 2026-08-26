@@ -28,9 +28,13 @@ done
 curl --fail --silent --show-error "$base_url/readyz" >/dev/null
 
 docker compose run --rm -v "$repo_dir/examples:/examples:ro" tlon catalog apply /examples/catalog.json >/dev/null
+docker compose run --rm -v "$repo_dir/examples:/examples:ro" tlon catalog apply /examples/temporal-catalog.json >/dev/null
 docker compose run --rm tlon demo seed --catalog demo --count 24 --seed 42 --reset >/dev/null
+docker compose run --rm tlon load seed --count 100 --batch-size 50 --reset >/dev/null
 curl --fail --silent --show-error "$base_url/playground" | grep -q 'Tlon playground'
 curl --fail --silent --show-error "$base_url/collections/demo/items?limit=0" | grep -q '"numberMatched":24'
+curl --fail --silent --show-error "$base_url/collections/load-transactional/items?limit=0&facets=" | grep -q '"numberMatched":100'
+curl --fail --silent --show-error "$base_url/collections/load-temporal/items?limit=0&facets=" | grep -q '"numberMatched":100'
 curl --fail --silent --show-error "$base_url/collections/demo/items?limit=0&facets=organizations,quality,resourceGroups" | grep -q '"resourceGroups"'
 
 record='{"id":"harvest-record","type":"Feature","geometry":null,"properties":{"type":"dataset","title":"Harvested","keywords":["harvest"],"score":25}}'
@@ -50,6 +54,14 @@ grep -qi '^Location: http://localhost:'"$TLON_HTTP_PORT"'/collections/records/it
 etag="$(awk 'tolower($1) == "etag:" {gsub("\r", "", $2); print $2}' /tmp/tlon-e2e-create.headers)"
 test -n "$etag"
 
+temporal='{"id":"event-1","type":"Feature","geometry":{"type":"Point","coordinates":[-77,39]},"time":{"timestamp":"2025-06-01T12:00:00Z"},"properties":{"type":"observation","title":"Temporal event","source":"sensor-a","category":"weather","value":42}}'
+status="$(curl --silent --output /dev/null --write-out '%{http_code}' -X PUT -H 'Content-Type: application/geo+json' --data "$temporal" "$base_url/collections/events/items/event-1")"
+test "$status" = "201"
+curl --fail --silent --show-error "$base_url/collections/events/items?datetime=2025-06-01T12:00:00Z&limit=1" | grep -q 'Temporal event'
+missing_time='{"id":"event-2","type":"Feature","geometry":null,"properties":{"type":"observation","title":"Missing time"}}'
+status="$(curl --silent --output /tmp/tlon-e2e-temporal-invalid.json --write-out '%{http_code}' -X PUT -H 'Content-Type: application/geo+json' --data "$missing_time" "$base_url/collections/events/items/event-2")"
+test "$status" = "400"
+
 replacement='{"id":"harvest-record","type":"Feature","geometry":{"type":"Point","coordinates":[-77,39]},"properties":{"type":"dataset","title":"Harvested replacement","keywords":["harvest"],"score":26}}'
 status="$(curl --silent --dump-header /tmp/tlon-e2e-replace.headers --output /dev/null --write-out '%{http_code}' -X PUT -H 'Content-Type: application/geo+json' -H "If-Match: $etag" --data "$replacement" "$base_url/collections/records/items/harvest-record")"
 test "$status" = "204"
@@ -64,7 +76,9 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 curl --fail --silent --show-error "$base_url/collections/records/items/harvest-record" | grep -q 'Harvested replacement'
+curl --fail --silent --show-error "$base_url/collections/events/items/event-1" | grep -q 'Temporal event'
 status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$base_url/collections/records/items/harvest-delete")"
 test "$status" = "404"
 
 curl --fail --silent --output /dev/null -X DELETE "$base_url/collections/records/items/harvest-record"
+curl --fail --silent --output /dev/null -X DELETE "$base_url/collections/events/items/event-1"

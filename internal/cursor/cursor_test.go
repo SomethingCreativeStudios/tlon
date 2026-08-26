@@ -48,3 +48,25 @@ func TestCursorRequiresRealSecret(t *testing.T) {
 		t.Fatal("short cursor secret accepted")
 	}
 }
+
+func TestScopeIgnoresPageSizeAndFacetRepresentation(t *testing.T) {
+	search := store.Search{
+		Limit: 10,
+		Types: []string{"dataset"},
+		Sort:  []store.SortField{{Property: "updated", Direction: "desc"}},
+	}
+	scope, err := Scope(search)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facets := "organizations"
+	search.Limit = 100
+	search.Facets = &facets
+	changed, err := Scope(search)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed != scope {
+		t.Fatalf("page representation changed cursor scope: %q != %q", changed, scope)
+	}
+}

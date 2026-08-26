@@ -32,7 +32,7 @@ func Compile(filter string, queryables map[string]store.Queryable) (Fragment, er
 		if err != nil {
 			return Fragment{}, fmt.Errorf("queryable %q: %w", name, err)
 		}
-		expr, err := propertyExpression(name, q)
+		expr, err := propertyExpression(name, q, "r.")
 		if err != nil {
 			return Fragment{}, fmt.Errorf("queryable %q: %w", name, err)
 		}
@@ -50,7 +50,13 @@ func Compile(filter string, queryables map[string]store.Queryable) (Fragment, er
 }
 
 func PropertySQL(name string, q store.Queryable) (string, error) {
-	return propertyExpression(name, q)
+	return propertyExpression(name, q, "r.")
+}
+
+// IndexSQL returns the same typed expression used by the CQL compiler without
+// a table alias so a datastore can safely embed it in an index definition.
+func IndexSQL(name string, q store.Queryable) (string, error) {
+	return propertyExpression(name, q, "")
 }
 
 func propertyType(q store.Queryable) (cqlapi.PropertyType, error) {
@@ -79,7 +85,7 @@ func propertyType(q store.Queryable) (cqlapi.PropertyType, error) {
 
 var pointerToken = regexp.MustCompile(`^[A-Za-z0-9_.:@-]+$`)
 
-func propertyExpression(name string, q store.Queryable) (string, error) {
+func propertyExpression(name string, q store.Queryable, qualifier string) (string, error) {
 	path := q.Path
 	if path == "" {
 		switch name {
@@ -93,18 +99,18 @@ func propertyExpression(name string, q store.Queryable) (string, error) {
 	}
 	switch path {
 	case "/id":
-		return `r.id`, nil
+		return qualifier + `id`, nil
 	case "/properties/created":
-		return `r.created_at`, nil
+		return qualifier + `created_at`, nil
 	case "/properties/updated":
-		return `r.updated_at`, nil
+		return qualifier + `updated_at`, nil
 	}
 	parts, err := pointerParts(path)
 	if err != nil {
 		return "", err
 	}
 	args := make([]string, 0, len(parts)+1)
-	args = append(args, "r.document")
+	args = append(args, qualifier+"document")
 	for _, part := range parts {
 		args = append(args, "'"+part+"'")
 	}
@@ -118,10 +124,10 @@ func propertyExpression(name string, q store.Queryable) (string, error) {
 		value = "NULLIF(" + value + ", '')::boolean"
 	case "string":
 		if q.Format == "date" {
-			value = "NULLIF(" + value + ", '')::date"
+			value = "public.tlon_iso_date(NULLIF(" + value + ", ''))"
 		}
 		if q.Format == "date-time" {
-			value = "NULLIF(" + value + ", '')::timestamptz"
+			value = "public.tlon_rfc3339_timestamptz(NULLIF(" + value + ", ''))"
 		}
 	case "array":
 		value = "jsonb_extract_path(" + strings.Join(args, ", ") + ")"

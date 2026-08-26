@@ -1,8 +1,6 @@
 services:
   database:
-    build:
-      context: .
-      dockerfile: docker/postgis/Dockerfile
+    image: timescale/timescaledb-ha:pg18.4-ts2.29.2-oss
     environment:
       POSTGRES_DB: tlon
       POSTGRES_USER: tlon
@@ -15,7 +13,7 @@ services:
     ports:
       - "${TLON_DB_PORT:-5432}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql
+      - timescale-data:/home/postgres/pgdata
 
   migrate:
     build:
@@ -49,4 +47,4 @@ services:
       - "${TLON_HTTP_PORT:-8080}:8080"
 
 volumes:
-  postgres-data:
+  timescale-data:

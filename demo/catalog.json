@@ -11,6 +11,19 @@
       "temporal": {"interval": [["2021-01-01", ".."]]}
     }
   },
+  "storage": {
+    "class": "transactional",
+    "autoFacetIndexes": true,
+    "indexes": [
+      {
+        "name": "organization-score",
+        "keys": [
+          {"property": "organization"},
+          {"property": "score"}
+        ]
+      }
+    ]
+  },
   "queryables": {
     "organization": {"title": "Publisher", "description": "Organization responsible for the resource", "type": "string", "x-tlon-path": "/properties/organization"},
     "keywords": {"title": "Keywords", "type": "array", "items": {"type": "string"}, "x-tlon-path": "/properties/keywords"},

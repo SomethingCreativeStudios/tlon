@@ -36,7 +36,7 @@ func (s *Service) SearchRecords(ctx context.Context, request api.SearchRecordsRe
 		first = result.Records[0].SortValues
 		last = result.Records[len(result.Records)-1].SortValues
 	}
-	links := s.links(requestFrom(ctx).URL, scope, request.CatalogId, search, first, last, result.HasPrev, result.HasNext, "application/geo+json")
+	links := s.links(requestFrom(ctx).URL, scope, request.CatalogId, search, first, last, result.HasPrev, result.HasNext, "application/geo+json", pageLinkOptions{suppressFacets: true})
 	now := time.Now().UTC()
 	response := api.RecordCollection{Type: api.FeatureCollection, Features: features, Links: links, NumberMatched: result.NumberMatched, NumberReturned: len(features), TimeStamp: &now}
 	if result.Facets != nil {

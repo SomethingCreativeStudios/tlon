@@ -36,6 +36,9 @@ func TestPlaygroundIsEmbedded(t *testing.T) {
 			if response.Header().Get("Content-Security-Policy") == "" {
 				t.Error("Content-Security-Policy is missing")
 			}
+			if got := response.Header().Get("Cache-Control"); got != "no-cache" {
+				t.Errorf("Cache-Control = %q", got)
+			}
 		})
 	}
 }
@@ -78,7 +81,7 @@ func TestPlaygroundAssetReferencesResolve(t *testing.T) {
 		t.Fatalf("playground status = %d", response.Code)
 	}
 
-	references := regexp.MustCompile(`(?:href|src)="(/playground/(?:styles\.css|app\.js))"`).FindAllStringSubmatch(response.Body.String(), -1)
+	references := regexp.MustCompile(`(?:href|src)="(/playground/(?:styles\.css|app\.js)(?:\?v=[^"]+)?)"`).FindAllStringSubmatch(response.Body.String(), -1)
 	if len(references) != 2 {
 		t.Fatalf("found %d playground asset references in index", len(references))
 	}
@@ -109,7 +112,7 @@ func TestPlaygroundIncludesQueryableCQLAutocomplete(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, "http://localhost/playground/app.js", nil)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	for _, marker := range []string{"state.metadata.queryables", "literalSuggestions", "acceptCQLSuggestion", "aria-activedescendant"} {
+	for _, marker := range []string{"state.metadata.queryables", "literalSuggestions", "acceptCQLSuggestion", "aria-activedescendant", `requestURL.searchParams.set("facets", "")`, "state.savedFacets", `if (!paging) state.savedFacets = data.facets || {}`} {
 		if !strings.Contains(response.Body.String(), marker) {
 			t.Errorf("playground JavaScript does not contain %q", marker)
 		}

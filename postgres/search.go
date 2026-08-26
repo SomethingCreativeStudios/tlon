@@ -41,6 +41,7 @@ type sortColumn struct {
 	Field      storeapi.SortField
 	Expression string
 	Cast       string
+	NonNull    bool
 }
 
 func (p *Store) SearchRecords(ctx context.Context, catalogID string, search storeapi.Search) (storeapi.SearchResult, error) {
@@ -58,20 +59,24 @@ func (p *Store) SearchRecords(ctx context.Context, catalogID string, search stor
 		return storeapi.SearchResult{}, err
 	}
 	search.Sort = sortFields(columns)
-	base, err := recordWhere(catalogID, search, catalog.Bundle.Queryables)
+	relation, err := relationFor(catalog.Bundle.Storage.Class)
+	if err != nil {
+		return storeapi.SearchResult{}, err
+	}
+	base, err := recordWhere(catalogID, search, catalog.Bundle.Queryables, relation == recordsTemporal)
 	if err != nil {
 		return storeapi.SearchResult{}, err
 	}
 	var result storeapi.SearchResult
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM records r WHERE `+base.where(), base.args...).Scan(&result.NumberMatched); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+string(relation)+` r WHERE `+base.where(), base.args...).Scan(&result.NumberMatched); err != nil {
 		return result, err
 	}
-	result.Facets, err = computeFacets(ctx, tx, base, search.Facets, catalog.Bundle)
+	result.Facets, err = computeFacets(ctx, tx, relation, base, search.Facets, catalog.Bundle)
 	if err != nil {
 		return result, err
 	}
 	if search.Limit > 0 {
-		result.Records, result.HasNext, result.HasPrev, err = pageRecords(ctx, tx, base, columns, search.Position, search.Limit)
+		result.Records, result.HasNext, result.HasPrev, err = pageRecords(ctx, tx, relation, base, columns, search.Position, search.Limit)
 		if err != nil {
 			return result, err
 		}
@@ -82,16 +87,16 @@ func (p *Store) SearchRecords(ctx context.Context, catalogID string, search stor
 	return result, nil
 }
 
-func recordWhere(catalogID string, search storeapi.Search, queryables map[string]storeapi.Queryable) (sqlBuilder, error) {
+func recordWhere(catalogID string, search storeapi.Search, queryables map[string]storeapi.Queryable, temporal bool) (sqlBuilder, error) {
 	b := sqlBuilder{}
 	b.add("r.catalog_id=" + b.arg(catalogID))
-	if err := addSharedPredicates(&b, search, queryables, false); err != nil {
+	if err := addSharedPredicates(&b, search, queryables, false, temporal); err != nil {
 		return b, err
 	}
 	return b, nil
 }
 
-func addSharedPredicates(b *sqlBuilder, search storeapi.Search, queryables map[string]storeapi.Queryable, catalog bool) error {
+func addSharedPredicates(b *sqlBuilder, search storeapi.Search, queryables map[string]storeapi.Queryable, catalog, temporal bool) error {
 	if len(search.Bbox) > 0 {
 		if len(search.Bbox) != 4 && len(search.Bbox) != 6 {
 			return fmt.Errorf("bbox must have four or six coordinates")
@@ -120,6 +125,9 @@ func addSharedPredicates(b *sqlBuilder, search storeapi.Search, queryables map[s
 		}
 		p1, p2 := b.arg(start), b.arg(end)
 		b.add("(NOT r.has_time OR r.time_range && tstzrange(" + p1 + "::timestamptz," + p2 + "::timestamptz,'[]'))")
+		if temporal && end != nil {
+			b.add("r.partition_time <= " + p2 + "::timestamptz")
+		}
 	}
 	if len(search.Q) > 0 {
 		terms := make([]string, 0, len(search.Q))
@@ -134,7 +142,7 @@ func addSharedPredicates(b *sqlBuilder, search storeapi.Search, queryables map[s
 		}
 	}
 	if len(search.Types) > 0 {
-		path := "r.document #>> '{properties,type}'"
+		path := "jsonb_extract_path_text(r.document, 'properties', 'type')"
 		if catalog {
 			path = "r.document->>'type'"
 		}
@@ -146,6 +154,9 @@ func addSharedPredicates(b *sqlBuilder, search storeapi.Search, queryables map[s
 	if len(search.ExternalIDs) > 0 {
 		if catalog {
 			b.add("r.external_ids && " + b.arg(search.ExternalIDs) + "::text[]")
+		} else if temporal {
+			values := b.arg(search.ExternalIDs)
+			b.add("EXISTS(SELECT 1 FROM record_external_ids e JOIN record_keys k ON k.catalog_id=e.catalog_id AND k.id=e.record_id WHERE e.catalog_id=r.catalog_id AND e.record_id=r.id AND k.partition_time=r.partition_time AND (e.external_id=ANY(" + values + "::text[]) OR e.value=ANY(" + values + "::text[])))")
 		} else {
 			b.add("EXISTS(SELECT 1 FROM record_external_ids e WHERE e.catalog_id=r.catalog_id AND e.record_id=r.id AND (e.external_id=ANY(" + b.arg(search.ExternalIDs) + "::text[]) OR e.value=ANY(" + b.arg(search.ExternalIDs) + "::text[])))")
 		}
@@ -190,13 +201,18 @@ func normalizeSort(requested, defaults []storeapi.SortField, allowed map[string]
 		if err != nil {
 			return nil, err
 		}
-		columns = append(columns, sortColumn{Field: field, Expression: expression, Cast: castFor(definition.Type, definition.Format)})
+		columns = append(columns, sortColumn{
+			Field:      field,
+			Expression: expression,
+			Cast:       castFor(definition.Type, definition.Format),
+			NonNull:    expression == "r.id" || expression == "r.created_at" || expression == "r.updated_at",
+		})
 		if field.Property == "id" {
 			hasID = true
 		}
 	}
 	if !hasID {
-		columns = append(columns, sortColumn{Field: storeapi.SortField{Property: "id", Direction: "asc"}, Expression: "r.id", Cast: "text"})
+		columns = append(columns, sortColumn{Field: storeapi.SortField{Property: "id", Direction: "asc"}, Expression: "r.id", Cast: "text", NonNull: true})
 	}
 	return columns, nil
 }
@@ -227,7 +243,7 @@ func castFor(typ, format string) string {
 	return "text"
 }
 
-func pageRecords(ctx context.Context, tx pgx.Tx, base sqlBuilder, columns []sortColumn, position *storeapi.CursorPosition, limit int) ([]storeapi.StoredRecord, bool, bool, error) {
+func pageRecords(ctx context.Context, tx pgx.Tx, relation recordRelation, base sqlBuilder, columns []sortColumn, position *storeapi.CursorPosition, limit int) ([]storeapi.StoredRecord, bool, bool, error) {
 	b := base.clone()
 	effective, nullsLast := effectiveSort(columns, position)
 	if position != nil {
@@ -243,13 +259,9 @@ func pageRecords(ctx context.Context, tx pgx.Tx, base sqlBuilder, columns []sort
 	}
 	orders := make([]string, len(effective))
 	for i, column := range effective {
-		nulls := "NULLS LAST"
-		if !nullsLast {
-			nulls = "NULLS FIRST"
-		}
-		orders[i] = column.Expression + " " + strings.ToUpper(column.Field.Direction) + " " + nulls
+		orders[i] = sortOrderSQL(column, nullsLast)
 	}
-	query := "SELECT " + strings.Join(selects, ",") + " FROM records r WHERE " + b.where() + " ORDER BY " + strings.Join(orders, ",") + " LIMIT " + b.arg(limit+1)
+	query := "SELECT " + strings.Join(selects, ",") + " FROM " + string(relation) + " r WHERE " + b.where() + " ORDER BY " + strings.Join(orders, ",") + " LIMIT " + b.arg(limit+1)
 	rows, err := tx.Query(ctx, query, b.args...)
 	if err != nil {
 		return nil, false, false, err
@@ -305,6 +317,17 @@ func effectiveSort(columns []sortColumn, position *storeapi.CursorPosition) ([]s
 	return result, false
 }
 
+func sortOrderSQL(column sortColumn, nullsLast bool) string {
+	result := column.Expression + " " + strings.ToUpper(column.Field.Direction)
+	if column.NonNull {
+		return result
+	}
+	if nullsLast {
+		return result + " NULLS LAST"
+	}
+	return result + " NULLS FIRST"
+}
+
 func keysetPredicate(b *sqlBuilder, columns []sortColumn, nullsLast bool, values []any) (string, error) {
 	if len(values) != len(columns) {
 		return "", fmt.Errorf("cursor has %d values; expected %d", len(values), len(columns))
@@ -325,7 +348,7 @@ func keysetPredicate(b *sqlBuilder, columns []sortColumn, nullsLast bool, values
 				op = "<"
 			}
 			comparison = column.Expression + " " + op + " " + placeholder
-			if nullsLast {
+			if nullsLast && !column.NonNull {
 				comparison = "(" + comparison + " OR " + column.Expression + " IS NULL)"
 			}
 		}
@@ -341,7 +364,11 @@ func keysetPredicate(b *sqlBuilder, columns []sortColumn, nullsLast bool, values
 				prefix = append(prefix, column.Expression+" IS NULL")
 			} else {
 				placeholder := b.arg(value) + "::" + column.Cast
-				prefix = append(prefix, column.Expression+" IS NOT DISTINCT FROM "+placeholder)
+				operator := " IS NOT DISTINCT FROM "
+				if column.NonNull {
+					operator = " = "
+				}
+				prefix = append(prefix, column.Expression+operator+placeholder)
 			}
 		}
 	}
@@ -444,7 +471,7 @@ func defaultFacetSort(d storeapi.FacetDefinition) string {
 	return "count_desc"
 }
 
-func computeFacets(ctx context.Context, tx pgx.Tx, base sqlBuilder, raw *string, bundle storeapi.CatalogBundle) (map[string]storeapi.FacetResult, error) {
+func computeFacets(ctx context.Context, tx pgx.Tx, relation recordRelation, base sqlBuilder, raw *string, bundle storeapi.CatalogBundle) (map[string]storeapi.FacetResult, error) {
 	requests, err := selectFacets(raw, bundle.Facets)
 	if err != nil {
 		return nil, err
@@ -458,11 +485,11 @@ func computeFacets(ctx context.Context, tx pgx.Tx, base sqlBuilder, raw *string,
 		var facet storeapi.FacetResult
 		switch definition.Type {
 		case storeapi.FacetTerm:
-			facet, err = termFacet(ctx, tx, base, request, definition, bundle.Queryables)
+			facet, err = termFacet(ctx, tx, relation, base, request, definition, bundle.Queryables)
 		case storeapi.FacetHistogram:
-			facet, err = histogramFacet(ctx, tx, base, request, definition, bundle.Queryables)
+			facet, err = histogramFacet(ctx, tx, relation, base, request, definition, bundle.Queryables)
 		case storeapi.FacetFilter:
-			facet, err = filterFacet(ctx, tx, base, request, definition, bundle.Queryables)
+			facet, err = filterFacet(ctx, tx, relation, base, request, definition, bundle.Queryables)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("facet %s: %w", request.Name, err)
@@ -472,7 +499,7 @@ func computeFacets(ctx context.Context, tx pgx.Tx, base sqlBuilder, raw *string,
 	return result, nil
 }
 
-func termFacet(ctx context.Context, tx pgx.Tx, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, queryables map[string]storeapi.Queryable) (storeapi.FacetResult, error) {
+func termFacet(ctx context.Context, tx pgx.Tx, relation recordRelation, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, queryables map[string]storeapi.Queryable) (storeapi.FacetResult, error) {
 	q := queryables[definition.Property]
 	expr, err := cql.PropertySQL(definition.Property, q)
 	if err != nil {
@@ -480,7 +507,7 @@ func termFacet(ctx context.Context, tx pgx.Tx, base sqlBuilder, request requeste
 	}
 	b := base.clone()
 	valueSQL := expr
-	from := "records r"
+	from := string(relation) + " r"
 	if q.Type == "array" || q.Items != nil {
 		valueSQL = "facet_value.value"
 		from += " CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(" + expr + ",'[]'::jsonb)) AS facet_value(value)"
@@ -524,22 +551,22 @@ func facetOrder(value, column string) string {
 	}
 }
 
-func histogramFacet(ctx context.Context, tx pgx.Tx, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, queryables map[string]storeapi.Queryable) (storeapi.FacetResult, error) {
+func histogramFacet(ctx context.Context, tx pgx.Tx, relation recordRelation, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, queryables map[string]storeapi.Queryable) (storeapi.FacetResult, error) {
 	q := queryables[definition.Property]
 	expr, err := cql.PropertySQL(definition.Property, q)
 	if err != nil {
 		return storeapi.FacetResult{}, err
 	}
 	if q.Format == "date-time" {
-		return temporalHistogram(ctx, tx, base, request, definition, expr)
+		return temporalHistogram(ctx, tx, relation, base, request, definition, expr)
 	}
-	return numericHistogram(ctx, tx, base, request, definition, expr)
+	return numericHistogram(ctx, tx, relation, base, request, definition, expr)
 }
 
-func numericHistogram(ctx context.Context, tx pgx.Tx, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, expr string) (storeapi.FacetResult, error) {
+func numericHistogram(ctx context.Context, tx pgx.Tx, relation recordRelation, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, expr string) (storeapi.FacetResult, error) {
 	b := base.clone()
 	var min, max *float64
-	if err := tx.QueryRow(ctx, "SELECT min("+expr+")::float8,max("+expr+")::float8 FROM records r WHERE "+b.where(), b.args...).Scan(&min, &max); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT min("+expr+")::float8,max("+expr+")::float8 FROM "+string(relation)+" r WHERE "+b.where(), b.args...).Scan(&min, &max); err != nil {
 		return storeapi.FacetResult{}, err
 	}
 	facet := storeapi.FacetResult{Type: storeapi.FacetHistogram, Property: definition.Property, Buckets: []storeapi.FacetBucket{}}
@@ -555,7 +582,7 @@ func numericHistogram(ctx context.Context, tx pgx.Tx, base sqlBuilder, request r
 	} else {
 		if *min == *max {
 			var count int64
-			if err := tx.QueryRow(ctx, "SELECT count(*) FROM records r WHERE "+b.where()+" AND "+expr+" IS NOT NULL", b.args...).Scan(&count); err != nil {
+			if err := tx.QueryRow(ctx, "SELECT count(*) FROM "+string(relation)+" r WHERE "+b.where()+" AND "+expr+" IS NOT NULL", b.args...).Scan(&count); err != nil {
 				return facet, err
 			}
 			if count >= definition.MinOccurs {
@@ -570,7 +597,7 @@ func numericHistogram(ctx context.Context, tx pgx.Tx, base sqlBuilder, request r
 	if definition.BucketType == storeapi.BucketFixedCount {
 		idxExpr = "LEAST(" + idxExpr + "," + strconv.Itoa(request.Count-1) + ")"
 	}
-	query := "SELECT " + idxExpr + " bucket,count(*) bucket_count FROM records r WHERE " + b.where() + " AND " + expr + " IS NOT NULL GROUP BY bucket HAVING count(*) >= " + b.arg(definition.MinOccurs) + " ORDER BY " + facetOrder(request.Sort, "bucket") + " LIMIT " + b.arg(request.Count+1)
+	query := "SELECT " + idxExpr + " bucket,count(*) bucket_count FROM " + string(relation) + " r WHERE " + b.where() + " AND " + expr + " IS NOT NULL GROUP BY bucket HAVING count(*) >= " + b.arg(definition.MinOccurs) + " ORDER BY " + facetOrder(request.Sort, "bucket") + " LIMIT " + b.arg(request.Count+1)
 	rows, err := tx.Query(ctx, query, b.args...)
 	if err != nil {
 		return facet, err
@@ -596,7 +623,7 @@ func numericHistogram(ctx context.Context, tx pgx.Tx, base sqlBuilder, request r
 	return facet, rows.Err()
 }
 
-func temporalHistogram(ctx context.Context, tx pgx.Tx, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, expr string) (storeapi.FacetResult, error) {
+func temporalHistogram(ctx context.Context, tx pgx.Tx, relation recordRelation, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, expr string) (storeapi.FacetResult, error) {
 	if definition.BucketType == storeapi.BucketFixedInterval {
 		var interval string
 		if err := json.Unmarshal(definition.Interval, &interval); err != nil {
@@ -605,7 +632,7 @@ func temporalHistogram(ctx context.Context, tx pgx.Tx, base sqlBuilder, request 
 		b := base.clone()
 		p := b.arg(interval)
 		bucket := "date_bin(" + p + "::interval," + expr + ",TIMESTAMPTZ '1970-01-01T00:00:00Z')"
-		query := "SELECT " + bucket + " bucket," + bucket + "+" + p + "::interval bucket_end,count(*) bucket_count FROM records r WHERE " + b.where() + " AND " + expr + " IS NOT NULL GROUP BY bucket,bucket_end HAVING count(*) >= " + b.arg(definition.MinOccurs) + " ORDER BY " + facetOrder(request.Sort, "bucket") + " LIMIT " + b.arg(request.Count+1)
+		query := "SELECT " + bucket + " bucket," + bucket + "+" + p + "::interval bucket_end,count(*) bucket_count FROM " + string(relation) + " r WHERE " + b.where() + " AND " + expr + " IS NOT NULL GROUP BY bucket,bucket_end HAVING count(*) >= " + b.arg(definition.MinOccurs) + " ORDER BY " + facetOrder(request.Sort, "bucket") + " LIMIT " + b.arg(request.Count+1)
 		rows, err := tx.Query(ctx, query, b.args...)
 		if err != nil {
 			return storeapi.FacetResult{}, err
@@ -629,7 +656,7 @@ func temporalHistogram(ctx context.Context, tx pgx.Tx, base sqlBuilder, request 
 	}
 	// Fixed bucket count uses epoch seconds but reports ISO timestamps.
 	epoch := "extract(epoch from " + expr + ")"
-	numeric, err := numericHistogram(ctx, tx, base, request, definition, epoch)
+	numeric, err := numericHistogram(ctx, tx, relation, base, request, definition, epoch)
 	if err != nil {
 		return numeric, err
 	}
@@ -651,7 +678,7 @@ func asFloat(value any) (float64, bool) {
 	return 0, false
 }
 
-func filterFacet(ctx context.Context, tx pgx.Tx, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, queryables map[string]storeapi.Queryable) (storeapi.FacetResult, error) {
+func filterFacet(ctx context.Context, tx pgx.Tx, relation recordRelation, base sqlBuilder, request requestedFacet, definition storeapi.FacetDefinition, queryables map[string]storeapi.Queryable) (storeapi.FacetResult, error) {
 	result := storeapi.FacetResult{Type: storeapi.FacetFilter, Property: definition.Property, Buckets: []storeapi.FacetBucket{}}
 	for name, filter := range definition.Filters {
 		fragment, err := cql.Compile(filter, queryables)
@@ -662,7 +689,7 @@ func filterFacet(ctx context.Context, tx pgx.Tx, base sqlBuilder, request reques
 		b.add("(" + cql.ShiftPlaceholders(fragment.SQL, len(b.args)) + ")")
 		b.args = append(b.args, fragment.Args...)
 		var count int64
-		if err := tx.QueryRow(ctx, "SELECT count(*) FROM records r WHERE "+b.where(), b.args...).Scan(&count); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM "+string(relation)+" r WHERE "+b.where(), b.args...).Scan(&count); err != nil {
 			return result, err
 		}
 		if count >= definition.MinOccurs {
@@ -709,7 +736,7 @@ func (p *Store) ListCatalogs(ctx context.Context, search storeapi.Search) (store
 		return storeapi.CatalogSearchResult{}, err
 	}
 	b := sqlBuilder{}
-	if err := addSharedPredicates(&b, search, queryables, true); err != nil {
+	if err := addSharedPredicates(&b, search, queryables, true, false); err != nil {
 		return storeapi.CatalogSearchResult{}, err
 	}
 	var result storeapi.CatalogSearchResult
@@ -730,17 +757,13 @@ func (p *Store) ListCatalogs(ctx context.Context, search storeapi.Search) (store
 		}
 		b.add(predicate)
 	}
-	selects := []string{"r.id", "r.document", "r.queryables", "r.sortables", "r.default_sort", "r.facets", "r.record_schema", "r.created_at", "r.updated_at"}
+	selects := []string{"r.id", "r.document", "r.storage", "r.queryables", "r.sortables", "r.default_sort", "r.facets", "r.record_schema", "r.created_at", "r.updated_at"}
 	for _, column := range columns {
 		selects = append(selects, "("+column.Expression+")::text")
 	}
 	orders := make([]string, len(effective))
 	for i, column := range effective {
-		nulls := "NULLS LAST"
-		if !nullsLast {
-			nulls = "NULLS FIRST"
-		}
-		orders[i] = column.Expression + " " + strings.ToUpper(column.Field.Direction) + " " + nulls
+		orders[i] = sortOrderSQL(column, nullsLast)
 	}
 	query := "SELECT " + strings.Join(selects, ",") + " FROM catalogs r WHERE " + b.where() + " ORDER BY " + strings.Join(orders, ",") + " LIMIT " + b.arg(search.Limit+1)
 	rows, err := tx.Query(ctx, query, b.args...)
@@ -750,9 +773,9 @@ func (p *Store) ListCatalogs(ctx context.Context, search storeapi.Search) (store
 	defer rows.Close()
 	for rows.Next() {
 		var item storeapi.Catalog
-		var doc, queryableJSON, sortableJSON, defaultJSON, facetsJSON, schema []byte
+		var doc, storageJSON, queryableJSON, sortableJSON, defaultJSON, facetsJSON, schema []byte
 		values := make([]any, len(columns))
-		dest := []any{&item.ID, &doc, &queryableJSON, &sortableJSON, &defaultJSON, &facetsJSON, &schema, &item.CreatedAt, &item.UpdatedAt}
+		dest := []any{&item.ID, &doc, &storageJSON, &queryableJSON, &sortableJSON, &defaultJSON, &facetsJSON, &schema, &item.CreatedAt, &item.UpdatedAt}
 		for i := range values {
 			dest = append(dest, &values[i])
 		}
@@ -761,6 +784,9 @@ func (p *Store) ListCatalogs(ctx context.Context, search storeapi.Search) (store
 		}
 		item.Bundle.Catalog = doc
 		item.Bundle.Schema = schema
+		if err := json.Unmarshal(storageJSON, &item.Bundle.Storage); err != nil {
+			return result, err
+		}
 		if err := json.Unmarshal(queryableJSON, &item.Bundle.Queryables); err != nil {
 			return result, err
 		}
