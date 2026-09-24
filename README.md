@@ -6,7 +6,7 @@
 
 *tlön (pronounced "tloon"), from Borges's "Tlön, Uqbar, Orbis Tertius": a world that exists entirely as encyclopedia entries.*
 
-Tlön is an OGC API Records server written in Go. It hosts a searchable catalog of metadata records describing sensor systems, deployments, procedures, and datastreams, usually harvested from one or more OGC API Connected Systems servers by [hronir](../hronir).
+Tlön is an OGC API Records server written in Go. It hosts a searchable catalog of metadata records describing sensor systems, deployments, procedures, and datastreams, usually harvested from one or more OGC API Connected Systems servers by [hronir](https://github.com/SomethingCreativeStudios/hronir).
 
 <br clear="left">
 
