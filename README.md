@@ -1,6 +1,23 @@
-# Tlon
 
-Tlon is a Go 1.27 server and reusable library for OGC API Records. This first milestone implements:
+
+# Tlön
+
+<img src="tlon-icon.svg" align="left" width="80" height="85" hspace="20" vspace="10" alt="Tlön icon">
+
+*tlön (pronounced "tloon"), from Borges's "Tlön, Uqbar, Orbis Tertius": a world that exists entirely as encyclopedia entries.*
+
+Tlön is an OGC API Records server written in Go. It hosts a searchable catalog of metadata records describing sensor systems, deployments, procedures, and datastreams, usually harvested from one or more OGC API Connected Systems servers by [hronir](../hronir).
+
+<br clear="left">
+
+
+## Why
+
+The Connected Systems API is good at serving live resources and data, but thin at discovery. Queries are per endpoint, there is no CQL2 filtering, no free-text search, no sorting, and no way to search across more than one server at a time. Answering "what sensors exist in this region, who runs them, and what do they measure" means querying every server separately and filtering on the client.
+
+Tlön adds a standards-based discovery layer on top. Each record is a lightweight description that links back to the live CS API resource, so Tlön answers "what exists and where" and the source server keeps answering "give me the data." One catalog can cover many servers, including ones you don't operate, and discovery keeps working even when a source is slow or offline.
+
+# What is it, really?
 
 - OGC API Records Part 1 JSON/GeoJSON discovery and searchable catalogs;
 - draft Part 2 simple and advanced term, histogram, and filter facets;
